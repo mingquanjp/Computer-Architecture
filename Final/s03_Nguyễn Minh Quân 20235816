@@ -1,0 +1,557 @@
+# Data section
+.data
+infix:          .space 256 # Bộ đệm chứa biểu thức trung tố nhập vào
+postfix:        .space 256 # Bộ đệm chứa biểu thức hậu tố
+stack:          .space 256 # Ngăn xếp dùng cho thuật toán chuyển đổi
+msg_read_infix: .string "Vui lòng nhập biểu thức trung tố: "
+msg_print_infix: .string "Biểu thức trung tố: "
+msg_print_postfix: .string "Biểu thức hậu tố: "
+msg_print_result: .string "Kết quả của biểu thức: "
+msg_enter:      .string "\n"
+msg_error1:     .string "Lỗi: Bạn đã nhập số lớn hơn 99. Vui lòng thử lại!\n"
+msg_error2:     .string "Lỗi: Bạn đã nhập số nhỏ hơn 0. Vui lòng thử lại!\n"
+msg_error3:     .string  "LỖI: Bạn đã nhập số chia bằng 0.\n"
+msg_error4:     .string  "LỖI: Dấu ngoặc đơn không hợp lệ. Vui lòng thử lại!\n"
+msg_error5:     .string "LỖI: Bạn đã nhập phép toán không hợp lệ. Vui lòng thử lại!\n"
+
+
+.text
+.globl main
+
+main:
+     # Gọi hàm nhập biểu thức trung tố
+    j input_infix
+
+#____________________________________________
+#  Hàm nhập và hiển thị biểu thức trung tố
+#___________________________________________
+input_infix:
+    # In thông báo nhập
+    la a0, msg_read_infix
+    li a7, 4           # Hệ thống gọi in chuỗi
+    ecall
+    
+    # Đọc chuỗi nhập vào
+    la a0, infix       # Địa chỉ bộ đệm
+    li a1, 256         # Độ dài tối đa
+    li a7, 8           # Hệ thống gọi đọc chuỗi
+    ecall
+     
+    # Khởi tạo bộ đếm ngoặc đơn
+    li t6, 0      # Bộ đếm cho ngoặc mở0
+    li s11, 0     # Index quét chuỗi
+    
+scan_parentheses:
+    la t1, infix
+    add t1, t1, s11
+    lb t0, 0(t1)
+    
+    beqz t0, check_final_parentheses #Kết thúc nếu gặp null
+    li t1, '\n'
+    beq t0, t1, check_final_parentheses #Kết thúc nếu gặp xuống dòng
+    
+    li t1, '('
+    beq t0, t1, count_open   #Tăng đếm nếu gặp ngoặc mở
+    li t1, ')'
+    beq t0, t1, count_close   #Giảm nếu gặp ngoặc đóng
+    
+    addi s11, s11, 1
+    j scan_parentheses
+
+count_open:
+    addi t6, t6, 1    #Tăng bộ đếm ngoặc mở
+    addi s11, s11, 1
+    j scan_parentheses
+
+count_close:
+    addi t6, t6, -1    #Giảm bộ đếm ngoặc mở
+    bltz t6, parentheses_error  # Báo lỗi nếu số ngoặc đóng  > ngoặc mở
+    addi s11, s11, 1
+    j scan_parentheses
+
+check_final_parentheses:
+    bnez t6, parentheses_error  # Báo lỗi nếu số ngoặc không cân ( t6 # 0 )
+        
+    # In  "Biểu thức trung tố: "
+    
+    la a0, msg_print_infix
+    li a7, 4
+    ecall
+    
+    # In biểu thức đã nhập
+    la a0, infix
+    li a7, 4
+    ecall
+    
+    j convert_postfix
+
+#Thông báo lỗi và cho nhập lại
+parentheses_error:    
+    la a0, msg_error4
+    li a7, 4
+    ecall
+    j input_infix
+
+
+#__________________________________________________________________
+# Hàm chuyển đổi biểu thức trung tố sang hậu tố
+#__________________________________________________________________
+convert_postfix:
+    # Khởi tạo thanh ghi
+    li s0, 0        # Chỉ cố j của ìnfix
+    li s1, 0        # Chỉ số i của postfox  
+    li s2, -1       # Chỉ số k của stack  
+    li a3, 0        # Bộ đếm ngoặc mở = 0
+    li s3, 0        # Phần tử để đẩy vào postfix  
+    
+    # Kiểm tra ký tự đầu tiên
+    la t0, infix
+    lb t0, 0(t0)
+    li t1, '-'
+    beq t0, t1, character_error   # Báo lỗi nếu bắt đầu bằng toán tử
+    
+    li t1, '/'
+    beq t0, t1, character_error   # Báo lỗi nếu bắt đầu bằng toán tử
+
+    li t1, '+'
+    beq t0, t1, character_error   # Báo lỗi nếu bắt đầu bằng toán tử
+
+    li t1, '*'
+    beq t0, t1, character_error    # Báo lỗi nếu bắt đầu bằng toán tử
+
+loop_infix:
+    #Đọc ký tự hiện tại 
+    la t1, infix
+    add t1, t1, s0       # s0 : chỉ số j của ìnix
+    lb t0, 0(t1)	#Load byte ký tự  hiện tại vào t0
+    
+    # Kiểm tra kết thúc chuỗi
+    beqz t0, end_loop_infix    # Nếu bằng null -> Kết thúc luôn
+    li t1, '\n'
+    beq t0, t1, end_loop_infix  #Nếu bằng xuống dòng -> Kết thúc luôn
+    
+    # Bỏ qua khoảng trắng space
+    li t1, ' '
+    beq t0, t1, remove_space1
+    
+    # Kiểm tra các toán tử và dấu ngoặc
+    li t1, '+'
+    beq t0, t1, consider_plus_minus
+    li t1, '-'
+    beq t0, t1, consider_plus_minus
+    li t1, '*'
+    beq t0, t1, consider_mul_div
+    li t1, '%'
+    beq t0, t1, consider_mul_div
+    li t1, '/'
+    beq t0, t1, consider_mul_div
+    li t1, '('
+    beq t0, t1, consider_lpar
+    li t1, ')'
+    beq t0, t1, consider_rpar1
+    
+    # Kiểm tra nếu là chữ số(0-9)
+    li t1, '0'
+    blt t0, t1, character_error    # Báo lỗi nếu ký tự đó < '0'
+    li t1, '9'
+    bgt t0, t1, character_error    # Báo lỗi nếu ký tự đó > '9'
+    
+    # Nếu là toán hạng, lưu vào postfix
+    la t1, postfix  	
+    add t1, t1, s1  # s1 : chỉ số i của postfix
+    sb t0, 0(t1)   # Lưu ký tự số
+    addi s1, s1, 1    #Tăng index postfix
+    
+    j loop_continue
+
+# Bỏ qua khoảng trắng
+remove_space1:
+    addi s0, s0, 1    #s0 : chỉ số j của ìnix
+    j loop_infix
+
+# Tiếp tục loop
+loop_continue:
+    addi s0, s0, 1   #Tăng chỉ số infix
+    la t1, infix   
+    add t1, t1, s0
+    lb t2, 0(t1)  #Đọc ký tự tiếp theo
+    
+    #Kiểm tra tiếp xem có phải là số không
+    li t3, '0'
+    bge t2, t3, check_digit
+    j not_digit
+    
+check_digit:
+    li t3, '9'
+    ble t2, t3, continue #Nếu vẫn là , tiếp tục xử lý
+    
+not_digit:        #Thêm khoảng trắng sau toán hạng
+    li s3, ' '
+    la t1, postfix
+    add t1, t1, s1
+    sb s3, 0(t1)
+    addi s1, s1, 1
+    j loop_infix
+
+continue:        #Xử lý số nhiều chữ số
+    addi t3, s0, 1   #Xem trước ký tự tiếp theo
+    la t1, infix
+    add t1, t1, t3
+    lb t4, 0(t1)
+    
+    # Kiểm tra số > 99
+    li t1, '0'
+    bge t4, t1, check_gt99
+    j store_number
+
+check_gt99:
+    li t1, '9'
+    ble t4, t1, g99_error  #Nếu có 3 chữ số liên tiếp - Báo lỗi
+    
+store_number:   # Lưu số vào postfix
+    la t1, postfix
+    add t1, t1, s1  #Địa chỉ lưu trữ  = postfix + offset s1
+    sb t2, 0(t1)  #Lưu chữ số thứ 2 từ t2 vào địa chỉ vừa tính( Nếu là 2 chữ số )
+    addi s1, s1, 1  #Tăng chỉ số postfix lên 1
+    
+    #Thêm khoảng trắng sau số
+    li s3, ' '
+    la t1, postfix
+    add t1, t1, s1
+    sb s3, 0(t1)
+    addi s1, s1, 1
+    addi s0, s0, 1  #Tăng chỉ số infix để xử lý kí tự tiếp theo trong biểu thức đầu vào
+    j loop_infix  #Nhảy về vòng lặp chính
+
+# Các hàm xử lý lỗi
+g99_error:
+    la a0, msg_error1
+    li a7, 4
+    ecall
+    j input_infix
+
+character_error:
+    la a0, msg_error5
+    li a7, 4
+    ecall
+    j input_infix
+
+# Xử lys toán tử + và - 
+consider_plus_minus:
+    li t1, -1
+    beq s2, t1, push_op  #Nếu stack rỗng, đẩy toán tử vào
+    
+    #Lấy toán tử từ đỉnh stack
+    la t1, stack
+    add t1, t1, s2  #Tính địa chỉ đỉnh stack
+    lb t5, 0(t1)    #Load toán tử ở đỉnh stack vào t5
+    
+    li t1, '('
+    beq t5, t1, push_op  # Nếu gặp '(', đẩy toán tử mới vào
+
+    
+    #Pop toán tử từ stack và đẩy vào postfix    
+    la t1, stack
+    add t1, t1, s2  
+    lb t1, 0(t1) #Lấy toán tử từ đỉnh stack
+    
+    la t2, postfix
+    add t2, t2, s1
+    sb t1, 0(t2)  #Lưu toán tử vào postfix
+    
+    addi s2, s2, -1  #Giảm chỉ số stack ( do pop )
+    addi s1, s1, 1   #Tăng chỉ số postfix
+    
+    #Thêm khoảng trắng phân cách
+    li s3, ' '
+    la t1, postfix
+    add t1, t1, s1
+    sb s3, 0(t1)
+    addi s1, s1, 1
+    
+    j consider_plus_minus  #Lặp lại cho đến khi gặp '(' hoặc stack rỗng
+    
+    
+# Xử lý toán tử *, /, %
+consider_mul_div:
+    li t1, -1
+    beq s2, t1, push_op    #Stack rỗng -> push ngay
+    
+    la t1, stack
+    add t1, t1, s2
+    lb t5, 0(t1) #Lấy toán tử ở đỉnh stack
+    
+    li t1, '('
+    beq t5, t1, push_op  #Gặp '(' -> push ngay
+    
+    li t1, '+'
+    beq t5, t1, push_op  #Gặp '+' -> push (vì * có ưu tiên cao hơn +)
+    
+    li t1, '-'
+    beq t5, t1, push_op  #Gặp '-' -> push (vì * có ưu tiên cao hơn -)
+    
+    
+    #Pop toán tử và đẩy vào postfix
+    la t1, stack
+    add t1, t1, s2
+    lb t1, 0(t1)  #Lấy toán tử từ đỉnh stack
+    
+    la t2, postfix
+    add t2, t2, s1
+    sb t1, 0(t2)   #Lưu toán tử vào postfix
+    
+    addi s2, s2, -1   #Giảm chỉ số stack ( do pop )
+    addi s1, s1, 1    #Tăng chỉ số postfix
+    
+    #Thêm khoảng trắng phân cách
+    li s3, ' '
+    la t1, postfix
+    add t1, t1, s1
+    sb s3, 0(t1)
+    addi s1, s1, 1
+    
+    j consider_mul_div #Lặp lại 
+
+#Đẩy toán tử vào stack
+push_op:  
+    addi s2, s2, 1    #Tăng chỉ số stack
+    la t1, stack
+    add t1, t1, s2
+    sb t0, 0(t1)  #Lưu toán tử hiện tại( trong t0) vào stack
+    addi s0, s0, 1  #Tăng chỉ số infix
+    j loop_infix    #Quay lại vòng lặp chính
+
+consider_lpar:  #Xử lý ngoặc mở '('
+    addi a3, a3, 1  #Tăng bộ đếm ngoặc
+    addi s2, s2, 1  #Đẩy vào stack
+    la t1, stack
+    add t1, t1, s2
+    sb t0, 0(t1)
+    addi s0, s0, 1
+    j loop_infix
+
+consider_rpar1:   #Xử lý ngoặc đóng ')'
+    beqz a3, invalid_parentheses #Báo lỗi nếu không có ngoặc mở tương ứng
+    addi a3, a3, -1   #Giảm bộ đếm ngoặc
+    j consider_rpar2
+
+consider_rpar2:  #Pop các toán tử từ stack cho đến khi gặp '('
+    la t1, stack
+    add t1, t1, s2
+    lb t1, 0(t1)
+    
+    li t2, '('
+    beq t1, t2, remove_lpar  #Dừng khi gặp '('
+    
+    #Đẩy toán tử vào postfix
+    la t2, postfix
+    add t2, t2, s1
+    sb t1, 0(t2)
+    
+    addi s2, s2, -1 #pop từ stack
+    addi s1, s1, 1  #Tăng chỉ số postfix
+    
+    
+   #Thêm khoảng trắng
+    li s3, ' '
+    la t1, postfix
+    add t1, t1, s1
+    sb s3, 0(t1)
+    addi s1, s1, 1
+    
+    j consider_rpar2  # Tiếp tục cho đến khi gặp '('
+
+remove_lpar:   # Loại bỏ '(' khỏi stack
+    addi s2, s2, -1
+    addi s0, s0, 1
+    j loop_infix
+
+invalid_parentheses: #In tbao lỗi
+    la a0, msg_error4
+    li a7, 4
+    ecall
+    j input_infix
+
+remove_parentheses:    # In biểu thức hậu tố
+    la a0, msg_print_postfix
+    li a7, 4
+    ecall
+    
+    la a0, postfix
+    li a7, 4
+    ecall
+    
+    la a0, msg_enter
+    li a7, 4
+    ecall
+    
+    j calculate_postfix
+
+
+end_loop_infix:   # Pop tất cả toán tử còn lại từ stack
+    li t1, -1
+    beq s2, t1, remove_parentheses  # Kết thúc nếu stack rỗng
+    
+     # Pop toán tử từ stack và đẩy vào postfix
+    la t1, stack
+    add t1, t1, s2
+    lb t0, 0(t1)
+    
+    la t1, postfix
+    add t1, t1, s1
+    sb t0, 0(t1)
+    
+    addi s2, s2, -1
+    addi s1, s1, 1
+    
+    
+   #Thêm khoảng trắng
+    li s3, ' '
+    la t1, postfix
+    add t1, t1, s1
+    sb s3, 0(t1)
+    addi s1, s1, 1
+    
+    j end_loop_infix
+
+#___________________________________________
+# Hàm tính toán biểu thức hậu tố
+#___________________________________________
+
+
+calculate_postfix:
+    li s1, 0           # Chỉ số cho chuỗi postfix
+    li s4, 0           # Biến tạm để xây số
+loop_postfix:
+    la t1, postfix
+    add t1, t1, s1
+    lb t0, 0(t1)
+    
+    beqz t0, print_result   #Kết thúc nếu gặp null
+    
+    li t1, ' '
+    beq t0, t1, process_number  #Xử lý số nếu gặp khoảng trắng
+    
+    # Kiểm tra nếu là chữ số
+    li t1, '0'
+    bge t0, t1, check_number
+    j check_operator
+    
+check_number:
+    li t1, '9'
+    ble t0, t1, build_number
+    j check_operator
+    
+build_number:  #Xây dựng số từ các chữ số
+    addi t0, t0, -48          # Chuyển ASCII sang số
+    li t1, 10
+    mul s4, s4, t1            # Nhân giá trị hiện tại với 10(Dịch chữ số )
+    add s4, s4, t0            # Thêm chữ số mới
+    addi s1, s1, 1	      #Tăng chỉ số
+    j loop_postfix
+
+
+process_number:
+    
+    beqz s4, remove_space     #Bỏ qua nếu chưa có số nào 
+    sw s4, 0(sp)              # Push số vào stack
+    addi sp, sp, 4	       # Di chuyển con trỏ stack
+    li s4, 0                  # Reset biến xây dựng số
+    j remove_space
+    
+remove_space:
+    addi s1, s1, 1
+    j loop_postfix
+    
+check_operator: #Pop 2 số từ stack
+    lw t4, -8(sp)             # Số thứ hai (pop trước)
+    lw t5, -4(sp)          	 # Số thứ nhất 
+    addi sp, sp, -8		 # Điều chỉnh con trỏ stack
+    
+    #Kiểm tra các loại toán tử
+    li t1, '+'
+    beq t0, t1, add_func
+    li t1, '-'
+    beq t0, t1, sub_func
+    li t1, '*'
+    beq t0, t1, mul_func
+    li t1, '/'
+    beq t0, t1, div_func
+    li t1, '%'
+    beq t0, t1, mod_func
+    
+    addi s1, s1, 1
+    j loop_postfix
+
+add_func:
+    add t4, t4, t5  #t4 = t4 + t5
+    sw t4, 0(sp)    #Push kết quả
+    addi sp, sp, 4
+    addi s1, s1, 1
+    j loop_postfix
+
+sub_func:
+    sub t4, t4, t5
+    sw t4, 0(sp)
+    addi sp, sp, 4
+    addi s1, s1, 1
+    j loop_postfix
+
+mul_func:
+    mul t4, t4, t5
+    sw t4, 0(sp)
+    addi sp, sp, 4
+    addi s1, s1, 1
+    j loop_postfix
+
+
+div_func:
+    #Kiểm tra chia cho 0 
+    beqz t5, division_by_zero
+  
+    
+    div t4, t4, t5
+    sw t4, 0(sp)
+    addi sp, sp, 4
+    addi s1, s1, 1
+    j loop_postfix
+
+
+division_by_zero:
+    la a0, msg_error3        # Thông báo lỗi chia cho 0
+    li a7, 4                 
+    ecall
+    
+    la a0, msg_enter        # In xuống dòng
+    li a7, 4
+    ecall
+    
+    j input_infix           #Quay lai nhập biểu thức mới
+
+#Phép chia lấy dư
+mod_func:
+    # Kiểm tra chia cho 0
+    beqz t5, division_by_zero
+    
+    rem t4, t4, t5
+    sw t4, 0(sp)
+    addi sp, sp, 4
+    addi s1, s1, 1
+    j loop_postfix
+
+#In kết quả cuối cùng
+print_result:
+    la a0, msg_print_result
+    li a7, 4
+    ecall
+    
+    lw a0, -4(sp) #Lấy kết quả từ stack
+    li a7, 1    #In int
+    ecall
+    
+    la a0, msg_enter
+    li a7, 4
+    ecall
+    
+    li a7, 10
+    ecall

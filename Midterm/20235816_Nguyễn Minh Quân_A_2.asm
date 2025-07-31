@@ -2,7 +2,9 @@
 	mess1: .asciz "Nhap so nguyen: "
 	mess2: .asciz "Day fibonnaci nho hon N la: "
 	space: .asciz " "
+	error_msg: .asciz "N phai lon hon 0"
 .text
+main:
 	#In chuoi Nhap so nguyen
 	li a7,4
 	la a0, mess1
@@ -14,9 +16,17 @@ get_Input:
 	ecall
 	mv t0,a0  # t0 = N
 	
-	#Neu N <=0 --> Ket thuc
-	bltz t0, ket_thuc
+	#Kiem tra N
+	bltz t0, error   # Nếu N < 0
+	beqz t0, error   # Nếu N = 0
+	beq x0,x0, valid_Input
+error:
+	li a7, 4
+  	 la a0, error_msg  # Chuỗi "N phai lon hon 0! \n"
+   	 ecall
+   	 j main
 	
+valid_Input:
 	#In mess2
 	li a7,4
 	la a0, mess2
@@ -50,7 +60,7 @@ get_Input:
 fibonacci:
 	add t3, t1, t2  #t3 = t1 + t2
 	
-	bge t3, t0,ket_thuc #if t1 + t2 >= N --> end
+	bgt t3, t0,ket_thuc #if t1 + t2 >= N --> end
 	
 	#In so tiep theo t3
 	li a7, 1

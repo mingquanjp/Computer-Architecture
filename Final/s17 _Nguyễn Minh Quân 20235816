@@ -1,0 +1,309 @@
+.eqv IN_ADDRESS_HEXA_KEYBOARD 0xFFFF0012  # Địa chỉ input của bàn phím hex
+.eqv OUT_ADDRESS_HEXA_KEYBOARD 0xFFFF0014  # Địa chỉ output của bàn phím hex
+.eqv SEVENSEG_LEFT  0xFFFF0011		 # Địa chỉ LED 7 đoạn bên trái
+.eqv SEVENSEG_RIGHT 0xFFFF0010		# Địa chỉ LED 7 đoạn bên phải
+
+# Mã hóa led 7 đoạn
+.eqv SEG_0  0x3F  # Mã hiển thị số 0: 00111111
+.eqv SEG_1  0x06  # Mã hiển thị số 1: 00000110
+.eqv SEG_2  0x5B
+.eqv SEG_3  0x4F
+.eqv SEG_4  0x66
+.eqv SEG_5  0x6D
+.eqv SEG_6  0x7D
+.eqv SEG_7  0x07
+.eqv SEG_8  0x7F
+.eqv SEG_9  0x6F
+
+.data
+#Mảng chứa mã LED 7 đoạn cho các số 0-9
+SEG_MAP:    .byte SEG_0, SEG_1, SEG_2, SEG_3, SEG_4, SEG_5, SEG_6, SEG_7, SEG_8, SEG_9 
+#Mảng số ngày trong mỗi tháng (năm thường và năm nhuận)
+namthuong:  .word 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+namnhuan:   .word 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+
+.text
+
+main:
+  
+    li a5, IN_ADDRESS_HEXA_KEYBOARD     # Load địa chỉ input bàn phím vào a5
+    li a6, OUT_ADDRESS_HEXA_KEYBOARD     # Load địa chỉ output bàn phím vào a6
+    
+auto_check:
+    jal calculate_time   # Gọi hàm tính toán thời gian
+    beqz s10, minute_sound  # Nếu giây = 0, phát âm thanh
+    j check_keypad   # Kiểm tra bàn phím để xử lý phím nhấn
+    
+        
+check_keypad:
+    # Kiểm tra hàng 1
+    li t0, 0x01   #Kích hoạt hàng 1
+    sb t0, 0(a5)  #Ghi địa chỉ vào output
+    lb t1, 0(a6)  #Đọc từ địa chỉ output
+    bne t1, zero, control_key   #Ouput # 0 -> Phím nhấn -> Xử lý
+    
+    # Kiểm tra hàng 2
+    li t0, 0x02
+    sb t0, 0(a5)
+    lb t1, 0(a6)
+    bne t1, zero, control_key
+    
+    j auto_check  # Nếu không có phím nhấn thì quay lại vòng lặp
+    
+            
+minute_sound:  #Baó phát âm thanh
+    li a7, 31  # System call number cho âm thanh MIDI
+    li a0, 75  #  tần số
+    li a1, 100 #ms
+    li a2, 14  #Intrusment
+    li a3, 30 #Volume
+    ecall
+    j auto_check
+    
+
+
+control_key:
+    # Nếu nhấn phím 1, hiển thị giờ
+    li t0, 0x21
+    beq t1, t0, display_hour
+    
+    # Phím 2: Hiển thị phút
+    li t0, 0x41
+    beq t1, t0, display_min
+    
+    # Phím 3: Hiển thị giây
+    li t0, 0xffffff81
+    beq t1, t0, display_sec
+    
+    # Phím 4: Hiển thị ngày
+    li t0, 0x12
+    beq t1, t0, display_day
+    
+    # Phím 5: Hiển thị tháng
+    li t0, 0x22
+    beq t1, t0, display_month
+    
+    # Phím 6: Hiển thị năm
+    li t0, 0x42
+    beq t1, t0, display_year
+    
+    j auto_check
+
+calculate_time: # Hám tính toán thời gian
+    li a7, 30  # System call để lấy thời gian
+    ecall
+    
+    li t1, 1000 #const = 1000ms = 1s
+    li t2, 2   #const =2 -> Dịch bit
+    li s0, 32  #Số lần dịch bit, xử lý micro giây
+    li s1, 0	#Bộ đếm vòng lặp
+    
+     # Chuyển đổi integer sang floating point
+    fcvt.d.wu fa0, a0, dyn  # Chuyển giây sang double
+    fcvt.d.wu fa1, a1, dyn   # Chuyển micro giây sang double
+    fcvt.d.wu ft0, zero, dyn  # Chuyển 0 sang double
+    fcvt.d.wu ft1, t1, dyn    # Chuyển 1000 sang double
+    fcvt.d.wu ft2, t2, dyn     # Chuyển 2 sang double
+    
+time_loop:
+    beq s1, s0, time_end   # Nếu đã dịch đủ 32 lần, thoát, tăng micro giây đủ lớn
+    fmul.d fa1, fa1, ft2   # fa1 = fa1 * 2 (dịch trái 1 bit)
+    addi s1, s1, 1	# Tăng bộ đếm
+    j time_loop		
+    
+time_end: #Tính toán thời gian cuối cùng
+    li s7, 25200    # Offset múi giờ (7 giờ = 7*3600 = 25200 giây) V = GMT 7
+    fcvt.d.wu ft7, s7	#-> double
+    
+    fadd.d fa0, fa1, fa0 # Cộng giây và micro giây
+    fdiv.d fa0, fa0, ft1  # /1000 -> chuyển về giây
+    fadd.d fa0, ft7, fa0  # Cộng offset múi giờ
+    
+    
+    
+   #Khởi tạo hằng số thời gian
+    li s0, 60		# Số giây/phút hoặc số phút/giờ
+    li s1, 3600	 	# Số giây/giờ
+    li s2, 86400	# Số giây/ngày
+    li s3, 1461		# Số ngày trong chu kỳ 4 năm, dùng để tính số ngày trung bình mỗi năm
+    li s4, 30		# Số ngày trung bình/tháng
+    li s5, 1970	 	# Năm tham chiếu (Unix timestamp)
+    li s7 4		# Hằng số 4
+    
+    # Chuyển đổi sang floating point
+    fcvt.d.wu fs0, s0	
+    fcvt.d.wu fs1, s1
+    fcvt.d.wu fs2, s2
+    fcvt.d.wu fs3, s3 
+    fcvt.d.wu fs4, s4
+
+    
+    #Tính năm
+    
+    # Tính số ngày từ 1/1/1970 
+    fdiv.d ft0, fa0, fs2   	# ft0 = tổng giây / giây_per_ngày
+    fcvt.wu.d s9, ft0		# Chuyển thành integer (số ngày)
+    fcvt.d.wu fs9, s9		# Chuyển lại thành double
+    flt.d t0, ft0, fs9		# So sánh để làm tròn xuống
+    sub s9, s9, t0		 # s9 = số ngày chính xác
+  
+    
+    fcvt.d.wu fs7, s7 dyn	# fs7 = 4.0
+    fdiv.d fs3, fs3, fs7, dyn	 # fs3 = 1461/4 = 365.25 (ngày/năm)
+    fdiv.d ft1, ft0, fs3, dyn	  # ft1 = số ngày / ngày_per_năm
+    
+    fcvt.wu.d t1, ft1, dyn	# t1 = số năm (integer)
+    
+    
+    fcvt.d.wu fs9, t1, dyn	# Chuyển lại sang double để so sánh
+    flt.d t0, ft1, fs9		 # So sánh để làm tròn (ft0 < fs9, t0 = 1, ngược lại t0 = 0.)
+    sub t1, t1, t0 		 # t1 = số năm chính xác	
+    
+    add s5, s5, t1		 # s5 = 1970 + số năm = năm hiện tại
+    
+    
+    
+    # Tính tháng và ngày
+    
+    #Tính số ngày còn lại trong năm
+    fcvt.d.wu ft1, t1 		# Chuyển số năm sang double
+    fnmsub.d ft2, ft1, fs3, ft0 # ft2 = ft0 - (ft1 * fs3) = ngày còn lại ,ft1 * fs3 = số ngày đầy đủ, ft0: só ngày tính từ tổng giây 
+    fcvt.wu.d t2, ft2           # Chuyển thành integer, làm tròn 
+    
+    #thời gian hiện tại:  9/6/2025):
+
+#Giả sử tổng số giây từ Unix epoch là khoảng $ 1749545580 $ giây (đã cộng offset GMT+7).
+#Số ngày: $ ft0 = 1749545580 \div 86400 \approx 20248.325 $ ngày.
+#Số năm: $ t1 = 55 $ (từ 1970 đến 2025).
+#Số ngày của các năm đầy đủ: $ ft1 \times fs3 = 55 \times 365.25 \approx 20088.75 $ ngày.
+#Số ngày còn lại: $ ft2 = 20248.325 - 20088.75 \approx 159.575 $ ngày.
+#Làm tròn xuống: $ t2 = 159 $ ngày (số ngày từ 1/1/2025 đến 9/6/2025).
+    
+     # Xác định năm nhuận
+    li a4, 4
+    li s10, 100
+    rem a2, s5, a4              # a2 = năm % 4 ( =0 là có kn năm nhuận )
+    rem a3, s5, s10             # a3 = năm % 100 ( = 0 là có kn kp năm nhuận )
+    
+    
+    # Chọn mảng phù hợp
+    la s10, namthuong		# Mặc định là năm thường
+    bne a2, zero, find_month    # Không chia hết cho 4 -> năm thường
+    beq a3, zero, find_month    # Chia hết cho 100 -> năm thường
+    la s10, namnhuan            # Năm nhuận
+
+find_month:
+    li t0, 0                    # chỉ số tháng (0-11)
+    
+find_month_loop:
+    lw t4, 0(s10)               # số ngày của tháng hiện tại từ mảng ở trên
+    blt t2, t4, found_month     # nếu số ngày còn lại < số ngày tháng này -> ngày hiện tại nằm trong tháng này
+    sub t2, t2, t4              # Nếu không, trừ số ngày của tháng này khỏi t2 ( số ngày còn lại )
+    addi s10, s10, 4            # chuyển sang tháng tiếp theo  
+    addi t0, t0, 1              # tăng chỉ số tháng
+    j find_month_loop		#Lăp lại cho đén khi tìm dc tháng phù hợp
+    
+#Ví dụ minh họa (thời gian: 9/6/2025):
+
+#Số ngày còn lại: $ t2 = 159 $ (tính từ 1/1/2025).
+#Mảng namthuong: [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31].
+#Vòng lặp:
+
+#Tháng 1: $ t4 = 31 $, $ 159 < 31 $ → Sai, $ t2 = 159 - 31 = 128 $, $ t0 = 1 $.
+#Tháng 2: $ t4 = 28 $, $ 128 < 28 $ → Sai, $ t2 = 128 - 28 = 100 $, $ t0 = 2 $.
+#Tháng 3: $ t4 = 31 $, $ 100 < 31 $ → Sai, $ t2 = 100 - 31 = 69 $, $ t0 = 3 $.
+#Tháng 4: $ t4 = 30 $, $ 69 < 30 $ → Sai, $ t2 = 69 - 30 = 39 $, $ t0 = 4 $.
+#Tháng 5: $ t4 = 31 $, $ 39 < 31 $ → Sai, $ t2 = 39 - 31 = 8 $, $ t0 = 5 $.
+#Tháng 6: $ t4 = 30 $, $ 8 < 30 $ → Đúng, nhảy đến found_month.
+    
+found_month:
+    addi t3, t0, 1              # t3 = tháng (1-12), chuyển chỉ số thành tháng thực tế
+    add t6, t2, zero            # Số ngày còn lại trogn t2 là số ngày trong tháng
+    
+    # Tính giờ, phút, giây
+    
+    # Tính giờ
+    fcvt.d.wu fs9, s9           # Chuyển số ngày sang double
+    fnmsub.d ft2, fs9, fs2, fa0 # ft2 = tổng giây - (ngày * giây_per_ngày)
+    fdiv.d ft0, ft2, fs1        # ft0 = giây còn lại / giây_per_giờ
+    fcvt.wu.d s8, ft0           # s8 = giờ hiện tại
+    
+    fcvt.d.wu fa1, s8           # Chuyển lại sang double
+    flt.d t0, ft0, fa1          # So sánh để làm tròn
+    sub s8, s8, t0              # s8 = giờ chính xác
+    
+     # Tính phút
+    fcvt.d.wu fs8, s8           # Chuyển giờ sang double
+    fnmsub.d ft3, fs8, fs1, ft2 # ft3 = giây còn lại - (giờ * giây_per_giờ)
+    fdiv.d ft0, ft3, fs0        # ft0 = giây còn lại / giây_per_phút(60)
+    fcvt.wu.d s9, ft0           # s9 = phút hiện tại
+    
+    fcvt.d.wu fa1, s9           # Chuyển lại sang double
+    flt.d t0, ft0, fa1          # So sánh để làm tròn
+    sub s9, s9, t0              # s9 = phút chính xác
+    
+#Số giây còn lại:  ft2 = 145260  giây.
+#Số giờ:  s8 = 0  (vì 01:33 AM).
+#Số giây còn lại sau giờ:  ft3 = 145260 - (0 \times 3600) = 145260  giây.
+#Số phút:  ft0 = 145260 \div 60 \approx 2421  phút →  s9 = 2421 \mod 60 = 33  phút (vì  2421 \div 60 \approx 40 \text{ giờ } + 33 \text{ phút} ).
+#Kết quả:  s9 = 33  (đúng với 01:33 AM).
+    
+     # Tính giây
+    fcvt.d.wu fs9, s9           # Chuyển phút sang double
+    fnmsub.d ft0, fs9, fs0, ft3 # ft0 = giây còn lại - (phút * giây_per_phút)
+    fcvt.wu.d s10, ft0          # s10 = giây hiện tại
+    
+    fcvt.d.wu fa1, s10          # Chuyển lại sang double
+    flt.d t0, ft0, fa1          # So sánh để làm tròn
+    sub s10, s10, t0            # s10 = giây chính xác
+    
+    jr ra                       # Trả về hàm gọi
+
+display_hour:
+    mv t1, s8
+    j encode_display
+
+display_min:
+    mv t1, s9
+    j encode_display
+
+display_sec:
+    mv t1, s10
+    j encode_display
+
+display_day:
+    mv t1, t6
+    j encode_display
+
+display_month:
+    mv t1,t3      
+    j encode_display
+
+display_year:
+    li a0, 100	 	# Lấy 2 chữ số cuối của năm
+    rem t1, s5, a0	# t1 = năm % 100
+    j encode_display
+
+
+
+encode_display:
+     # Tách số thành 2 chữ số
+     li t2, 10                   # Hằng số 10
+    div t3, t1, t2              # t3 = chữ số hàng chục
+    rem t4, t1, t2              # t4 = chữ số hàng đơn vị
+
+    # Hiển thị chữ số hàng chục trên LED trái
+    la t5, SEG_MAP              # Load địa chỉ mảng SEG_MAP
+    add t5, t5, t3              # t5 = địa chỉ mã LED cho chữ số hàng chục
+    lb t6, 0(t5)                # Load mã LED
+    li t0, SEVENSEG_LEFT        # Load địa chỉ LED trái
+    sb t6, 0(t0)                # Ghi mã LED ra hardware
+
+    # Hiển thị chữ số hàng đơn vị trên LED phải
+    la t5, SEG_MAP              # Load địa chỉ mảng SEG_MAP
+    add t5, t5, t4              # t5 = địa chỉ mã LED cho chữ số hàng đơn vị
+    lb t6, 0(t5)                # Load mã LED
+    li t0, SEVENSEG_RIGHT       # Load địa chỉ LED phải
+    sb t6, 0(t0)                # Ghi mã LED ra hardware
+    
+    j auto_check                   # Quay lại vòng lặp chính
